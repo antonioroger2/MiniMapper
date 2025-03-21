@@ -93,9 +93,8 @@ def update_instructions():
 
     return jsonify({"current_step": current_step})
 
+
 if __name__ == '__main__':
-    # For production, use debug=False
-    app.run(debug=False, use_reloader=False)
-    
-    # For development, you can use debug=True, but make sure to disable the reloader
-    # app.run(debug=True, use_reloader=False)
+    # Bind to 0.0.0.0 to make the app accessible externally
+    app.run(host="0.0.0.0", port=3000)
+
