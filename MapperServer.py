@@ -2,14 +2,13 @@ from flask import Flask, request, jsonify
 from flask_mqtt import Mqtt
 import requests
 import ssl
-from bs4 import BeautifulSoup
 from geopy.distance import geodesic
 
 app = Flask(__name__)
 
 # Google Maps API Configuration
-GOOGLE_MAPS_API_URL = "https://maps.googleapis.com/maps/api/directions/json"
-GOOGLE_MAPS_API_KEY = "AIzaSyDMVIak8Nds7TPq-57bFlHguCL5g043wUE"
+ROUTES_API_URL = "https://routes.googleapis.com/directions/v2:computeRoutes"
+GOOGLE_MAPS_API_KEY = "AIzaSyCLhqETVQUqIGeqY2OEDTuvjmw3wxgYZik"
 
 # MQTT Configuration
 app.config['MQTT_BROKER_URL'] = "2df5030af7634175a5de7b701ae3b138.s1.eu.hivemq.cloud"
@@ -20,7 +19,6 @@ app.config['MQTT_TLS_ENABLED'] = True
 app.config['MQTT_TLS_INSECURE'] = False
 app.config['MQTT_CLEAN_SESSION'] = True
 
-# Initialize MQTT client with connect_async=True to handle connection failures
 mqtt_client = Mqtt(app, connect_async=True)
 MQTT_TOPIC_INSTRUCTIONS = "esp32/route/instructions"
 
@@ -36,10 +34,10 @@ def handle_disconnect():
     print('Disconnected from MQTT broker')
 
 # Helper to extract instructions and waypoints
-def extract_route_data(directions):
-    steps = directions["routes"][0]["legs"][0]["steps"]
-    instructions = [BeautifulSoup(step["html_instructions"], "html.parser").get_text() for step in steps]
-    waypoints = [(step["end_location"]["lat"], step["end_location"]["lng"]) for step in steps]
+def extract_route_data(route_response):
+    steps = route_response["routes"][0]["legs"][0]["steps"]
+    instructions = [step["navigationInstruction"]["instructions"] for step in steps]
+    waypoints = [(step["endLocation"]["latLng"]["latitude"], step["endLocation"]["latLng"]["longitude"]) for step in steps]
     return instructions, waypoints
 
 @app.route('/r', methods=['GET'])
@@ -51,14 +49,28 @@ def get_route():
         return jsonify({"error": "Current location and destination are required"}), 400
 
     lat, lon = map(float, current_location.split(','))
-    source = f"{lat},{lon}"
-    params = {"origin": source, "destination": destination, "key": GOOGLE_MAPS_API_KEY}
-    response = requests.get(GOOGLE_MAPS_API_URL, params=params)
+    source = {"latitude": lat, "longitude": lon}
+    dest_lat, dest_lon = map(float, destination.split(','))
+    destination_coords = {"latitude": dest_lat, "longitude": dest_lon}
+
+    payload = {
+        "origin": {"location": {"latLng": source}},
+        "destination": {"location": {"latLng": destination_coords}},
+        "travelMode": "BICYCLE"
+    }
+
+    headers = {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": GOOGLE_MAPS_API_KEY,
+        "X-Goog-FieldMask": "routes.legs.steps.navigationInstruction,routes.legs.steps.endLocation"
+    }
+
+    response = requests.post(ROUTES_API_URL, json=payload, headers=headers)
 
     if response.status_code == 200:
-        directions = response.json()
-        instructions, waypoints = extract_route_data(directions)
-        polyline = directions["routes"][0]["overview_polyline"]["points"]
+        route_response = response.json()
+        instructions, waypoints = extract_route_data(route_response)
+        polyline = route_response["routes"][0]["polyline"]["encodedPolyline"]
 
         return jsonify({
             "instructions": instructions,
@@ -95,6 +107,4 @@ def update_instructions():
 
 
 if __name__ == '__main__':
-    # Bind to 0.0.0.0 to make the app accessible externally
     app.run(host="0.0.0.0", port=3000)
-
