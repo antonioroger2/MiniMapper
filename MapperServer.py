@@ -1,14 +1,13 @@
 from flask import Flask, request, jsonify
 from flask_mqtt import Mqtt
 import requests
-import ssl
 from geopy.distance import geodesic
 
 app = Flask(__name__)
 
 # Google Maps API Configuration
 ROUTES_API_URL = "https://routes.googleapis.com/directions/v2:computeRoutes"
-GOOGLE_MAPS_API_KEY = "AIzaSyCLhqETVQUqIGeqY2OEDTuvjmw3wxgYZik"
+GOOGLE_MAPS_API_KEY = "AIzaSyDMVIak8Nds7TPq-57bFlHguCL5g043wUE"
 
 # MQTT Configuration
 app.config['MQTT_BROKER_URL'] = "2df5030af7634175a5de7b701ae3b138.s1.eu.hivemq.cloud"
@@ -35,10 +34,17 @@ def handle_disconnect():
 
 # Helper to extract instructions and waypoints
 def extract_route_data(route_response):
-    steps = route_response["routes"][0]["legs"][0]["steps"]
-    instructions = [step["navigationInstruction"]["instructions"] for step in steps]
-    waypoints = [(step["endLocation"]["latLng"]["latitude"], step["endLocation"]["latLng"]["longitude"]) for step in steps]
-    return instructions, waypoints
+    try:
+        # Access the steps in the first route's first leg
+        steps = route_response["routes"][0]["legs"][0]["steps"]
+        
+        # Extract navigation instructions and waypoints
+        instructions = [step.get("navigationInstruction", {}).get("instructions", "No instruction available") for step in steps]
+        waypoints = [(step["endLocation"]["latLng"]["latitude"], step["endLocation"]["latLng"]["longitude"]) for step in steps]
+        
+        return instructions, waypoints
+    except KeyError as e:
+        raise ValueError(f"Missing expected key in Routes API response: {e}")
 
 @app.route('/r', methods=['GET'])
 def get_route():
@@ -48,37 +54,44 @@ def get_route():
     if not current_location or not destination:
         return jsonify({"error": "Current location and destination are required"}), 400
 
-    lat, lon = map(float, current_location.split(','))
-    source = {"latitude": lat, "longitude": lon}
-    dest_lat, dest_lon = map(float, destination.split(','))
-    destination_coords = {"latitude": dest_lat, "longitude": dest_lon}
+    try:
+        lat, lon = map(float, current_location.split(','))
+        source = {"latitude": lat, "longitude": lon}
+        dest_lat, dest_lon = map(float, destination.split(','))
+        destination_coords = {"latitude": dest_lat, "longitude": dest_lon}
 
-    payload = {
-        "origin": {"location": {"latLng": source}},
-        "destination": {"location": {"latLng": destination_coords}},
-        "travelMode": "BICYCLE"
-    }
+        payload = {
+            "origin": {"location": {"latLng": source}},
+            "destination": {"location": {"latLng": destination_coords}},
+            "travelMode": "BICYCLE"
+        }
 
-    headers = {
-        "Content-Type": "application/json",
-        "X-Goog-Api-Key": GOOGLE_MAPS_API_KEY,
-        "X-Goog-FieldMask": "routes.legs.steps.navigationInstruction,routes.legs.steps.endLocation"
-    }
+        headers = {
+            "Content-Type": "application/json",
+            "X-Goog-Api-Key": GOOGLE_MAPS_API_KEY,
+            "X-Goog-FieldMask": "routes.legs.steps.navigationInstruction,routes.legs.steps.endLocation,routes.polyline.encodedPolyline"
+        }
 
-    response = requests.post(ROUTES_API_URL, json=payload, headers=headers)
+        response = requests.post(ROUTES_API_URL, json=payload, headers=headers)
 
-    if response.status_code == 200:
-        route_response = response.json()
-        instructions, waypoints = extract_route_data(route_response)
-        polyline = route_response["routes"][0]["polyline"]["encodedPolyline"]
+        if response.status_code == 200:
+            route_response = response.json()
+            try:
+                instructions, waypoints = extract_route_data(route_response)
+                polyline = route_response["routes"][0]["polyline"]["encodedPolyline"]
 
-        return jsonify({
-            "instructions": instructions,
-            "waypoints": waypoints,
-            "polyline": polyline
-        })
-    else:
-        return jsonify({"error": "Failed to fetch route", "details": response.text}), response.status_code
+                return jsonify({
+                    "instructions": instructions,
+                    "waypoints": waypoints,
+                    "polyline": polyline
+                })
+            except ValueError as e:
+                return jsonify({"error": str(e)}), 500
+        else:
+            return jsonify({"error": f"Failed to fetch route: {response.status_code}", 
+                            "details": response.text}), response.status_code
+    except Exception as e:
+        return jsonify({"error": f"An error occurred: {str(e)}"}), 500
 
 @app.route('/update-instructions', methods=['POST'])
 def update_instructions():
@@ -91,19 +104,22 @@ def update_instructions():
     if not current_location or not waypoints or not instructions:
         return jsonify({"error": "Invalid data provided"}), 400
 
-    next_waypoint = waypoints[current_step]
-    distance = geodesic((current_location["lat"], current_location["lng"]), next_waypoint).meters
+    try:
+        next_waypoint = waypoints[current_step]
+        distance = geodesic((current_location["lat"], current_location["lng"]), next_waypoint).meters
 
-    if distance < 50:  # Threshold in meters
-        current_step += 1
-        if current_step < len(instructions):
-            next_instruction = instructions[current_step]
-            mqtt_client.publish(MQTT_TOPIC_INSTRUCTIONS, next_instruction)
-            return jsonify({"current_step": current_step, "instruction": next_instruction})
-        else:
-            return jsonify({"message": "Route completed"}), 200
+        if distance < 50:  # Threshold in meters
+            current_step += 1
+            if current_step < len(instructions):
+                next_instruction = instructions[current_step]
+                mqtt_client.publish(MQTT_TOPIC_INSTRUCTIONS, next_instruction)
+                return jsonify({"current_step": current_step, "instruction": next_instruction})
+            else:
+                return jsonify({"message": "Route completed"}), 200
 
-    return jsonify({"current_step": current_step})
+        return jsonify({"current_step": current_step})
+    except Exception as e:
+        return jsonify({"error": f"An error occurred: {str(e)}"}), 500
 
 
 if __name__ == '__main__':
