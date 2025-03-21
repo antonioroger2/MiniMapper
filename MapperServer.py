@@ -7,10 +7,11 @@ from bs4 import BeautifulSoup
 
 app = Flask(__name__)
 
-# Static Configuration
+# Google Maps API Configuration
 GOOGLE_MAPS_API_URL = "https://maps.googleapis.com/maps/api/directions/json"
 GOOGLE_MAPS_API_KEY = "AIzaSyDMVIak8Nds7TPq-57bFlHguCL5g043wUE"
 
+# MQTT Configuration
 MQTT_BROKER = "2df5030af7634175a5de7b701ae3b138.s1.eu.hivemq.cloud"
 MQTT_PORT = 8883
 MQTT_USERNAME = "harishjanarth"
@@ -52,6 +53,7 @@ def get_route():
     if response.status_code == 200:
         directions = response.json()
         instructions, waypoints = extract_route_data(directions)
+        
         return jsonify({"instructions": instructions, "waypoints": waypoints})
     else:
         return jsonify({"error": "Failed to fetch route"}), response.status_code
@@ -84,4 +86,4 @@ def update_instructions():
 
 if __name__ == '__main__':
     mqtt_client.loop_start()
-    app.run(debug=True, host='0.0.0.0', port=10000)
+    app.run(host='0.0.0.0', port=10000, debug=True)
