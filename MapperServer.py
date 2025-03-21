@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify
+from flask_mqtt import Mqtt
 import requests
-import paho.mqtt.client as mqtt
 import ssl
 from bs4 import BeautifulSoup
 from geopy.distance import geodesic
@@ -12,19 +12,28 @@ GOOGLE_MAPS_API_URL = "https://maps.googleapis.com/maps/api/directions/json"
 GOOGLE_MAPS_API_KEY = "AIzaSyDMVIak8Nds7TPq-57bFlHguCL5g043wUE"
 
 # MQTT Configuration
-MQTT_BROKER = "2df5030af7634175a5de7b701ae3b138.s1.eu.hivemq.cloud"
-MQTT_PORT = 8883
-MQTT_USERNAME = "harishjanarth"
-MQTT_PASSWORD = "Harish@123"
+app.config['MQTT_BROKER_URL'] = "2df5030af7634175a5de7b701ae3b138.s1.eu.hivemq.cloud"
+app.config['MQTT_BROKER_PORT'] = 8883
+app.config['MQTT_USERNAME'] = "harishjanarth"
+app.config['MQTT_PASSWORD'] = "Harish@123"
+app.config['MQTT_TLS_ENABLED'] = True
+app.config['MQTT_TLS_INSECURE'] = False
+app.config['MQTT_CLEAN_SESSION'] = True
+
+# Initialize MQTT client with connect_async=True to handle connection failures
+mqtt_client = Mqtt(app, connect_async=True)
 MQTT_TOPIC_INSTRUCTIONS = "esp32/route/instructions"
 
-mqtt_client = mqtt.Client()
+@mqtt_client.on_connect()
+def handle_connect(client, userdata, flags, rc):
+    if rc == 0:
+        print('Connected successfully to MQTT broker')
+    else:
+        print('Bad connection to MQTT broker. Code:', rc)
 
-def setup_mqtt():
-    mqtt_client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
-    mqtt_client.tls_set_context(ssl.create_default_context())
-    mqtt_client.connect(MQTT_BROKER, MQTT_PORT, 60)
-setup_mqtt()
+@mqtt_client.on_disconnect()
+def handle_disconnect():
+    print('Disconnected from MQTT broker')
 
 # Helper to extract instructions and waypoints
 def extract_route_data(directions):
@@ -77,8 +86,7 @@ def update_instructions():
         current_step += 1
         if current_step < len(instructions):
             next_instruction = instructions[current_step]
-            if mqtt_client.is_connected():
-                mqtt_client.publish(MQTT_TOPIC_INSTRUCTIONS, next_instruction)
+            mqtt_client.publish(MQTT_TOPIC_INSTRUCTIONS, next_instruction)
             return jsonify({"current_step": current_step, "instruction": next_instruction})
         else:
             return jsonify({"message": "Route completed"}), 200
@@ -86,5 +94,8 @@ def update_instructions():
     return jsonify({"current_step": current_step})
 
 if __name__ == '__main__':
-    mqtt_client.loop_start()
-    app.run(debug=True)
+    # For production, use debug=False
+    app.run(debug=False, use_reloader=False)
+    
+    # For development, you can use debug=True, but make sure to disable the reloader
+    # app.run(debug=True, use_reloader=False)
