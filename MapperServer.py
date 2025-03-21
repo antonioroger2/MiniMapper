@@ -9,7 +9,7 @@ app = Flask(__name__)
 
 # Google Maps API Configuration
 GOOGLE_MAPS_API_URL = "https://maps.googleapis.com/maps/api/directions/json"
-GOOGLE_MAPS_API_KEY = "YOUR_GOOGLE_MAPS_API_KEY"
+GOOGLE_MAPS_API_KEY = "AIzaSyDMVIak8Nds7TPq-57bFlHguCL5g043wUE"
 
 # MQTT Configuration
 MQTT_BROKER = "2df5030af7634175a5de7b701ae3b138.s1.eu.hivemq.cloud"
