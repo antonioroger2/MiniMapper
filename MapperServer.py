@@ -25,7 +25,7 @@ mqtt_client = mqtt.Client()
 def setup_mqtt():
     def on_connect(client, userdata, flags, rc):
         print("MQTT connected!" if rc == 0 else f"MQTT connection failed: {rc}")
-    
+
     mqtt_client.on_connect = on_connect
     mqtt_client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
     mqtt_client.tls_set_context(ssl.create_default_context())
@@ -40,42 +40,32 @@ def extract_route_data(directions):
     return instructions, waypoints
 
 def encode_route_data(instructions, waypoints):
-    """Encode route data for URL sharing"""
-    route_data = {
-        "instructions": instructions,
-        "waypoints": waypoints
-    }
+    route_data = {"instructions": instructions, "waypoints": waypoints}
     json_data = json.dumps(route_data)
     base64_data = base64.b64encode(json_data.encode()).decode()
     return base64_data
 
 @app.route('/r', methods=['GET'])
 def get_route():
-    # Get coordinates and destination from URL parameters
     current_location = request.args.get('c')
     destination = request.args.get('d')
-    
+
     if not current_location or not destination:
         return jsonify({"error": "Current location (c) and destination (d) are required"}), 400
-    
-    # Current location is in format "lat,lng"
+
     source = current_location
     params = {"origin": source, "destination": destination, "key": GOOGLE_MAPS_API_KEY}
-    
+
     response = requests.get(GOOGLE_MAPS_API_URL, params=params)
-    
+
     if response.status_code == 200:
         directions = response.json()
         instructions, waypoints = extract_route_data(directions)
-        
-        # Encode route data for URL sharing
         encoded_data = encode_route_data(instructions, waypoints)
-        
-        # Calculate total distance and duration
+
         total_distance = directions["routes"][0]["legs"][0]["distance"]["text"]
         total_duration = directions["routes"][0]["legs"][0]["duration"]["text"]
-        
-        # Return JSON response with all necessary data
+
         return jsonify({
             "success": True,
             "route": {
@@ -85,14 +75,8 @@ def get_route():
                 "total_duration": total_duration,
                 "encoded_data": encoded_data
             },
-            "origin": {
-                "location": source,
-                "address": directions["routes"][0]["legs"][0]["start_address"]
-            },
-            "destination": {
-                "location": destination,
-                "address": directions["routes"][0]["legs"][0]["end_address"]
-            }
+            "origin": {"location": source},
+            "destination": {"location": destination}
         })
     else:
         return jsonify({
@@ -107,32 +91,27 @@ def update_progress():
     current_location = data.get('current_location')
     current_step = data.get('current_step', 0)
     encoded_data = data.get('encoded_data')
-    
+
     if not current_location or encoded_data is None:
         return jsonify({"success": False, "error": "Invalid data"}), 400
-    
+
     try:
-        # Decode route data
         json_data = base64.b64decode(encoded_data).decode()
         route_data = json.loads(json_data)
-        
         instructions = route_data.get('instructions', [])
         waypoints = route_data.get('waypoints', [])
-        
-        # Check if we've reached the next waypoint
+
         if current_step < len(waypoints):
             next_waypoint = waypoints[current_step]
             distance = geodesic((current_location["lat"], current_location["lng"]), next_waypoint).meters
-            
+
             if distance < 50:
-                # We've reached this waypoint
                 current_step += 1
-                
                 if current_step < len(instructions):
                     next_instruction = instructions[current_step]
                     if mqtt_client.is_connected():
                         mqtt_client.publish(MQTT_TOPIC_INSTRUCTIONS, next_instruction)
-                    
+
                     return jsonify({
                         "success": True,
                         "current_step": current_step,
@@ -146,7 +125,7 @@ def update_progress():
                         "waypoint_reached": True,
                         "route_completed": True
                     })
-            
+
             return jsonify({
                 "success": True,
                 "current_step": current_step,
